@@ -750,7 +750,7 @@ def send_discord_notification(events):
 
 if __name__ == "__main__":
     notified_urls = load_notified_urls()
-    new_events = fetch_falench_events(notified_urls)
+    new_events = fetch_SUPERJYAPON_events(notified_urls)
 
     if new_events:
         results = {
