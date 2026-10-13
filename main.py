@@ -126,7 +126,7 @@ def _normalize_en(line):
     line = re.sub(
         r'(20\d{2})\s*(?:year(?:\(s\)|s)?)?\s*([A-Za-z]{3,9})\.?\s*(\d{1,2})\s*(?:day(?:\(s\)|s)?)?',
         repl, line)
-    line = re.sub(r'\((Mon\vert{}Tue\vert{}Wed\vert{}Thu\vert{}Fri\vert{}Sat\vert{}Sun)[a-z]*\)',
+    line = re.sub(r'\((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\)',
                   lambda m: f"({_WD[m.group(1).lower()]})", line)
     return line
 
@@ -456,4 +456,261 @@ def is_past_event(url, checked):
     return end < datetime.now(JST).date() - timedelta(days=PAST_MARGIN_DAYS)
 
 
-def save_
+def save_checked_urls(checked):
+    limit = datetime.now(JST).date() - timedelta(days=365)
+    pruned = {}
+    for url, d in checked.items():
+        try:
+            if date.fromisoformat(d) >= limit:
+                pruned[url] = d
+        except Exception:
+            pass
+    with open(CHECKED_FILE, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(pruned.items())), f, ensure_ascii=False, indent=0)
+    print(f"[DEBUG] 非出演イベントの記録を {len(pruned)} 件保存しました。")
+
+
+def _check_urls_worker(urls):
+    events, excluded = [], []
+    if not urls:
+        return events, excluded
+
+    with sync_playwright() as p:
+        browser, context = _new_context(p)
+        page = context.new_page()
+
+        for url in urls:
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.wait_for_selector("h1", timeout=8000)
+                except Exception:
+                    pass
+
+                detail_html = page.content()
+                detail_soup = BeautifulSoup(detail_html, "html.parser")
+
+                if is_superjyapon_performing(detail_soup):
+                    title_tag = detail_soup.find("h1") or detail_soup.find("title")
+                    raw_title = title_tag.get_text(strip=True) if title_tag else "SUPER JYAPON 出演ライブ"
+
+                    clean_title = raw_title.replace(" - LivePocket-Ticket-", "").replace("｜LivePocket", "")
+                    clean_title = re.sub(r'\s+', ' ', clean_title).strip()
+                    if len(clean_title) > 70:
+                        clean_title = clean_title[:70] + "..."
+
+                    event_date, sales_period = extract_event_details_from_page(page, url)
+
+                    print(f"[MATCH] ★SUPER JYAPONの出演を確認！: {clean_title} ({url})")
+                    print(f"        📅 日程: {event_date}")
+                    print(f"        🎟 販売期間: {sales_period}")
+
+                    events.append({
+                        "title": clean_title,
+                        "url": url,
+                        "date": event_date,
+                        "sales_period": sales_period,
+                    })
+                else:
+                    print(f"[EXCLUDE] SUPER JYAPON非出演のため除外: {url}")
+                    end_date = _event_end_date(_clean_lines(_soup_text(detail_html)))
+                    if detail_soup.find("h1") and end_date:
+                        excluded.append((url, end_date.isoformat()))
+
+            except Exception as e:
+                print(f"[WARN] 詳細検証失敗 ({url}): {e}")
+
+        browser.close()
+
+    return events, excluded
+
+
+def fetch_superjyapon_events(notified_urls):
+    t_start = time.time()
+    candidate_urls = set()
+    checked = load_checked_urls()
+    skipped_checked = 0
+
+    organizers = load_organizers()
+
+    search_urls = [
+        "https://livepocket.jp/event/search?search_word=SUPER%20JYAPON",
+    ] + [org["url"] for org in organizers if "url" in org]
+
+    with sync_playwright() as p:
+        browser, context = _new_context(p)
+        page = context.new_page()
+
+        for target_url in search_urls:
+            print(f"[DEBUG] ページをスキャン中: {target_url}")
+            try:
+                page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_selector('a[href*="/e/"], a[href*="/event/detail/"]', timeout=10000)
+                except Exception:
+                    pass
+
+                soup = BeautifulSoup(page.content(), "html.parser")
+
+                for a_tag in soup.find_all("a", href=True):
+                    href = a_tag["href"]
+                    if "/e/" not in href and "/event/detail/" not in href:
+                        continue
+
+                    full_url = href if href.startswith("http") else f"https://livepocket.jp{href}"
+                    clean_url = full_url.split("?")[0]
+
+                    if "/event/search" in clean_url:
+                        continue
+                    if clean_url in notified_urls:
+                        continue
+                    if is_past_event(clean_url, checked):
+                        skipped_checked += 1
+                        continue
+
+                    candidate_urls.add(clean_url)
+            except Exception as e:
+                print(f"[WARN] スキャン失敗 ({target_url}): {e}")
+
+        browser.close()
+
+    candidates = sorted(candidate_urls)
+    print(f"[DEBUG] 収集された検証対象のイベント総数: {len(candidates)}"
+          f"（開催済みで省略: {skipped_checked} 件）  [{time.time() - t_start:.1f}s]")
+
+    new_events = []
+    excluded_all = []
+    if candidates:
+        n = max(1, min(MAX_WORKERS, len(candidates)))
+        chunks = [candidates[i::n] for i in range(n)]
+        print(f"[DEBUG] {n} 並列で詳細ページを検証します。")
+        with ThreadPoolExecutor(max_workers=n) as ex:
+            for events, excluded in ex.map(_check_urls_worker, chunks):
+                new_events.extend(events)
+                excluded_all.extend(excluded)
+
+    for u, end_iso in excluded_all:
+        checked[u] = end_iso
+    save_checked_urls(checked)
+
+    new_events.sort(key=lambda e: e["url"])
+    print(f"[DEBUG] 最終抽出された「SUPER JYAPON」出演ライブ数: {len(new_events)}"
+          f"  [合計 {time.time() - t_start:.1f}s]")
+    return new_events
+
+
+LINE_TEXT_LIMIT = 4500
+DISCORD_TEXT_LIMIT = 1900
+
+
+def build_message_chunks(events, limit):
+    header = "🎉 【SUPER JYAPON】出演のチケット・ライブ情報が見つかりました！\n\n"
+    blocks = [
+        f"📌 {e['title']}\n"
+        f"📅 日程: {e['date']}\n"
+        f"🎟 販売期間: {e['sales_period']}\n"
+        f"🔗 {e['url']}"
+        for e in events
+    ]
+
+    chunks = []
+    current = header
+    for block in blocks:
+        candidate = current + block + "\n\n"
+        if len(candidate) > limit and current.strip() and current != header:
+            chunks.append(current.strip())
+            current = block + "\n\n"
+        else:
+            current = candidate
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
+
+
+def send_line_notification(events):
+    if not events:
+        print("[INFO] 送信する新着イベントがありません。")
+        return False
+
+    if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
+        print("[INFO] LINEの認証情報が未設定のため、LINE通知をスキップします。")
+        return False
+
+    endpoint = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+    }
+
+    all_ok = True
+    for chunk in build_message_chunks(events, LINE_TEXT_LIMIT):
+        payload = {
+            "to": LINE_USER_ID,
+            "messages": [{"type": "text", "text": chunk}]
+        }
+        res = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+        print(f"[DEBUG] LINE APIレスポンスコード: {res.status_code}")
+        print(f"[DEBUG] LINE APIレスポンス詳細: {res.text}")
+        if res.status_code != 200:
+            print(f"[ERROR] LINE送信失敗: {res.status_code}")
+            all_ok = False
+
+    if all_ok:
+        print("[SUCCESS] LINEへの通知が成功しました！")
+    return all_ok
+
+
+def send_discord_notification(events):
+    if not events:
+        return False
+
+    if not DISCORD_WEBHOOK_URL:
+        print("[INFO] DISCORD_WEBHOOK_URL が未設定のため、Discord通知をスキップします。")
+        return False
+
+    all_ok = True
+    for chunk in build_message_chunks(events, DISCORD_TEXT_LIMIT):
+        payload = {
+            "content": chunk,
+            "allowed_mentions": {"parse": []},
+        }
+        res = None
+        for attempt in range(2):
+            res = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=30)
+            if res.status_code == 429 and attempt == 0:
+                try:
+                    wait = float(res.json().get("retry_after", 1))
+                except Exception:
+                    wait = 1.0
+                print(f"[WARN] Discordのレート制限。{wait}秒待って再送します。")
+                time.sleep(min(wait, 10))
+                continue
+            break
+
+        print(f"[DEBUG] Discord APIレスポンスコード: {res.status_code}")
+        if res.status_code not in (200, 204):
+            print(f"[ERROR] Discord送信失敗: {res.status_code} {res.text[:200]}")
+            all_ok = False
+
+    if all_ok:
+        print("[SUCCESS] Discordへの通知が成功しました！")
+    return all_ok
+
+
+if __name__ == "__main__":
+    notified_urls = load_notified_urls()
+    new_events = fetch_superjyapon_events(notified_urls)
+
+    if new_events:
+        results = {
+            "LINE": send_line_notification(new_events),
+            "Discord": send_discord_notification(new_events),
+        }
+        for name, ok in results.items():
+            print(f"[RESULT] {name}: {'成功' if ok else '失敗/スキップ'}")
+
+        if any(results.values()):
+            new_urls = {e["url"] for e in new_events}
+            save_notified_urls(new_urls, notified_urls)
+        else:
+            print("[ERROR] どの通知先にも送信できなかったため、キャッシュは更新しません。")
