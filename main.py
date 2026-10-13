@@ -15,11 +15,11 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 CACHE_FILE = "notified_urls.txt"
 ORGANIZERS_FILE = "organizers.json"
-# 「SUPERJYAPON非出演」と判定したイベントの終了日を記録するファイル。
+# 「SUPERJYAPON.非出演」と判定したイベントの終了日を記録するファイル。
 # 開催済み（終了日が過去）のイベントだけを次回以降スキップする。開催前のイベントは毎回再検証する
-# （後からFalench.の出演が追加される場合があるため）。
+# （後からSUPERJYAPONの出演が追加される場合があるため）。
 CHECKED_FILE = "past_events.json"
-PAST_MARGIN_DAYS = 1                # 終了日からこの日数を過ぎたら「開催済み」とみなす
+PAST_MARGIN_DAYS = 1                    # 終了日からこの日数を過ぎたら「開催済み」とみなす
 JST = ZoneInfo("Asia/Tokyo")
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "4"))  # 詳細ページの並列数
 DEBUG_DIR = "debug_pages"  # 抽出に失敗したページのテキスト/HTMLを保存する場所
@@ -59,7 +59,7 @@ def save_notified_urls(new_urls, existing_urls):
     print(f"[DEBUG] キャッシュに合計 {len(all_urls)} 件保存しました。")
 
 
-def is_SUPERJYAPON_performing(soup):
+def is_superjyapon_performing(soup):
     """
     イベント詳細ページのメイン本文エリア内に SUPERJYAPON が出演者として記載されているか高精度に判定
     """
@@ -71,7 +71,7 @@ def is_SUPERJYAPON_performing(soup):
     ):
         unwanted.decompose()
 
-    pattern = re.compile(r'SUPERJYAPON(?:\.|\b)', re.IGNORECASE)
+    pattern = re.compile(r'superjyapon(?:\.|\b)', re.IGNORECASE)
 
     title_element = soup_copy.find("h1") or soup_copy.find("title")
     if title_element and pattern.search(title_element.get_text()):
@@ -94,16 +94,8 @@ def is_SUPERJYAPON_performing(soup):
 
 # =====================================================================
 # 開催日時・販売期間の抽出
-#
-# 方針: DOM構造（dt/ddの隣接関係など）に依存せず、ページ全体を「行テキスト」に
-#       変換してから、ラベル行 + 日付パターンで取り出す。
-#   1) page.inner_text("body")        … 画面に見えているテキスト
-#   2) BeautifulSoup.get_text("\n")   … 非表示(折りたたみ等)の要素も含むテキスト
-#   3) JSON-LD (schema.org/Event)     … 埋め込まれていれば最も正確
-# の順に試し、どれも失敗した場合は debug_pages/ にダンプを保存する。
 # =====================================================================
 
-# 日付・時刻パターン
 DATE_STRICT = r'20\d{2}\s*(?:[/.\-]|年)\s*\d{1,2}\s*(?:[/.\-]|月)\s*\d{1,2}\s*日?'
 DATE_LOOSE = r'(?:20\d{2}\s*(?:[/.\-]|年)\s*)?\d{1,2}\s*(?:[/.\-]|月)\s*\d{1,2}\s*日?'
 WEEKDAY = r'(?:\s*[\(（][^\)）]{1,4}[\)）])?'
@@ -114,7 +106,6 @@ RANGE_SEP = r'(?:[～〜~–—]|\s-\s)'
 RANGE_ANY = re.compile(rf'{DT_STRICT}\s*{RANGE_SEP}\s*(?:{DT_LOOSE}|{TIME})?')
 RANGE_FULL = re.compile(rf'{DT_STRICT}\s*{RANGE_SEP}\s*{DT_LOOSE}')
 
-# ラベル候補
 DATE_LABELS = ["開催日時", "公演日時", "開催日", "公演日", "日時", "日程", "開催期間", "date"]
 SALES_LABELS = [
     "チケット販売期間", "販売期間", "受付期間", "申込期間", "申し込み期間",
@@ -124,7 +115,6 @@ SALES_LABELS = [
 SALES_KW = re.compile(r'販売|発売|受付|申込|申し込み|締切|締め切り|まで|から')
 NOT_EVENT_DATE_KW = re.compile(r'販売|発売|受付|申込|申し込み|締切|締め切り|期限|更新|投稿|公開|まで|から|入金|支払')
 
-# ラベルの次行以降に続く「値の続き」とみなす行
 CONT_RE = re.compile(
     r'^(?:[\(（]|\d{1,2}\s*[:：]\s*\d{2}|20\d{2}\s*[/.\-年]|開場|開演|OPEN|START|Open|Start|open|start|[～〜~–—])'
 )
@@ -136,11 +126,6 @@ _WD = {"mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sa
 
 
 def _normalize_en(line):
-    """
-    WOVN等で英語化された表記を日本語ページ相当に直す。
-      "2026 year Oct. 18 day (Sun)" -> "2026/10/18(日)"
-      "2026 Oct. 13 (Tue)"          -> "2026/10/13(火)"
-    """
     def repl(m):
         mon = _MONTHS.get(m.group(2)[:3].lower())
         if not mon:
@@ -150,7 +135,7 @@ def _normalize_en(line):
     line = re.sub(
         r'(20\d{2})\s*(?:year(?:\(s\)|s)?)?\s*([A-Za-z]{3,9})\.?\s*(\d{1,2})\s*(?:day(?:\(s\)|s)?)?',
         repl, line)
-    line = re.sub(r'\((Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\)',
+    line = re.sub(r'\((Mon\vert{}Tue\vert{}Wed\vert{}Thu\vert{}Fri\vert{}Sat\vert{}Sun)[a-z]*\)',
                   lambda m: f"({_WD[m.group(1).lower()]})", line)
     return line
 
@@ -165,7 +150,6 @@ def _clean_lines(text):
 
 
 def _soup_text(html):
-    """非表示要素も含めたテキスト（不要領域は除去）"""
     soup = BeautifulSoup(html, "html.parser")
     for t in soup(["script", "style", "noscript", "header", "footer"]):
         t.decompose()
@@ -175,10 +159,6 @@ def _soup_text(html):
 
 
 def _labeled_values(lines, labels, strict=False):
-    """
-    「ラベル 値」または「ラベル\\n値」形式から、日付を含む値をすべて取り出す（ジェネレータ）。
-    値が複数行に分かれている場合（日付 / (木) / 18:00 など）は連結する。
-    """
     date_pat = DT_STRICT if strict else DT_LOOSE
     for i, line in enumerate(lines):
         for label in labels:
@@ -208,7 +188,6 @@ def _labeled_value(lines, labels, strict=False):
 
 
 def _guess_event_date(lines):
-    """ラベルが見つからない場合のヒューリスティック"""
     for line in lines:
         if (len(line) < 150 and re.search(DT_STRICT, line)
                 and re.search(r'開場|開演|OPEN|START', line, re.IGNORECASE)
@@ -236,14 +215,11 @@ def _extract_sales(lines, event_date=""):
             return
         found.append(s)
 
-    # 1) ラベル付き（販売期間: ... など）を最優先。チケット種別ごとに複数あれば全部拾う
     for v in _labeled_values(lines, SALES_LABELS):
         add(v)
     if found:
         return " / ".join(found[:4])
 
-    # 2) ラベルが無い場合のみのフォールバック。
-    #    「同じ主催者のイベント」以降は他イベントなので対象外にする
     for idx, line in enumerate(lines):
         if SECTION_CUT_RE.search(line):
             lines = lines[:idx]
@@ -252,7 +228,6 @@ def _extract_sales(lines, event_date=""):
     for line in lines:
         if any(line.lower().startswith(l.lower()) for l in DATE_LABELS):
             continue
-        # 同日の範囲（10/13 ～ 10/13）は開催日程であって販売期間ではない
         if len(line) < 150 and RANGE_ANY.search(line) and _collapse_same_day(line) == line:
             add(line)
 
@@ -272,7 +247,6 @@ def _extract_sales(lines, event_date=""):
 
 
 def _collapse_same_day(s):
-    """「10/18(日) ～ 10/18(日)」のような同日範囲を1日にまとめる"""
     parts = re.split(r'\s*[～〜~–—]\s*', s)
     if len(parts) == 2:
         d1, d2 = re.search(DATE_STRICT, parts[0]), re.search(DATE_STRICT, parts[1])
@@ -282,7 +256,6 @@ def _collapse_same_day(s):
 
 
 def _find_open_start(lines):
-    """OPEN19:25/START19:40 形式の開場・開演時刻を探す"""
     pat = re.compile(
         r'(?:OPEN|開場)\s*\d{1,2}[:：]\d{2}(?:\s*[/／]\s*(?:START|開演)\s*\d{1,2}[:：]\d{2})?',
         re.IGNORECASE)
@@ -355,414 +328,4 @@ def _dump_debug(url, body_text, html):
     print("----- [DUMP END] -----")
 
     try:
-        os.makedirs(DEBUG_DIR, exist_ok=True)
-        slug = re.sub(r'[^A-Za-z0-9_-]+', "_", url.rstrip("/").split("/")[-1])[:60] or "page"
-        with open(os.path.join(DEBUG_DIR, f"{slug}.txt"), "w", encoding="utf-8") as f:
-            f.write(body_text or "")
-        with open(os.path.join(DEBUG_DIR, f"{slug}.html"), "w", encoding="utf-8") as f:
-            f.write(html)
-    except Exception as e:
-        print(f"[WARN] デバッグ保存失敗: {e}")
-
-
-def extract_event_details_from_page(page, url="", scroll=False):
-    """
-    LivePocketのイベント詳細ページから【開催日時】と【販売期間】を抽出する。
-    """
-    # 通常はスクロール不要（サーバー描画済み）。取れなかった場合のみ、再試行時にスクロールする
-    if scroll:
-        try:
-            for ratio in (1 / 3, 2 / 3, 1):
-                page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {ratio});")
-                page.wait_for_timeout(300)
-            page.wait_for_timeout(500)
-        except Exception:
-            pass
-
-    try:
-        body_text = page.inner_text("body")
-    except Exception:
-        body_text = ""
-    html = page.content()
-
-    texts = [_clean_lines(body_text), _clean_lines(_soup_text(html))]
-    ld = _from_jsonld(html)
-
-    # --- 開催日時 ---
-    event_date = ""
-    event_lines = texts[0]
-    for lines in texts:
-        event_date = _labeled_value(lines, DATE_LABELS)
-        if event_date:
-            event_lines = lines
-            break
-    if not event_date:
-        event_date = ld["date"]
-    if not event_date:
-        for lines in texts:
-            event_date = _guess_event_date(lines)
-            if event_date:
-                event_lines = lines
-                break
-
-    event_date_raw = event_date  # 販売期間の誤検出除外用に、整形前の値を保持
-    if event_date:
-        event_date = _collapse_same_day(event_date)
-        if not re.search(TIME, event_date):
-            open_start = _find_open_start(event_lines) or _find_open_start(texts[1])
-            if open_start:
-                event_date = f"{event_date} {open_start}"
-
-    # --- 販売期間 ---
-    sales_period = ""
-    for lines in texts:
-        sales_period = _extract_sales(lines, event_date_raw)
-        if sales_period:
-            break
-    if not sales_period:
-        sales_period = ld["sales"]
-
-    if (not event_date or not sales_period) and not scroll:
-        return extract_event_details_from_page(page, url, scroll=True)
-
-    if not event_date or not sales_period:
-        print(f"[DEBUG] 抽出不足 date={bool(event_date)} sales={bool(sales_period)} → ダンプ保存")
-        _dump_debug(url, body_text, html)
-
-    return (event_date or UNKNOWN), (sales_period or UNKNOWN)
-
-
-# 不要なリソース（画像・フォント・計測/広告/翻訳スクリプト）は読み込まない
-BLOCK_RESOURCE_TYPES = {"image", "media", "font"}
-BLOCK_URL_KEYWORDS = (
-    "googletagmanager.com", "google-analytics.com", "doubleclick.net", "googlesyndication.com",
-    "facebook.net", "facebook.com/tr", "wovn.io", "clarity.ms", "hotjar.com",
-    "ads-twitter.com", "analytics.twitter.com", "adsrvr.org", "criteo",
-)
-
-
-def _route_handler(route):
-    req = route.request
-    if req.resource_type in BLOCK_RESOURCE_TYPES or any(k in req.url for k in BLOCK_URL_KEYWORDS):
-        route.abort()
-    else:
-        route.continue_()
-
-
-def _new_context(p):
-    browser = p.chromium.launch(headless=True)
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        viewport={'width': 1280, 'height': 800},
-        locale="ja-JP",
-        timezone_id="Asia/Tokyo",
-        extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9"},
-    )
-    context.route("**/*", _route_handler)
-    return browser, context
-
-
-def _event_end_date(lines):
-    """日時ラベルの値から開催（最終）日を読み取る。読み取れなければ None（=毎回再検証する）"""
-    raw = _labeled_value(lines, DATE_LABELS)
-    if not raw:
-        return None
-    found = re.findall(r'(20\d{2})\s*(?:[/.\-]|年)\s*(\d{1,2})\s*(?:[/.\-]|月)\s*(\d{1,2})', raw)
-    dates = []
-    for y, m, d in found:
-        try:
-            dates.append(date(int(y), int(m), int(d)))
-        except ValueError:
-            pass
-    return max(dates) if dates else None
-
-
-def load_checked_urls():
-    if os.path.exists(CHECKED_FILE):
-        try:
-            with open(CHECKED_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except Exception as e:
-            print(f"[WARN] {CHECKED_FILE} の読み込みエラー: {e}")
-    return {}
-
-
-def is_past_event(url, checked):
-    """開催済み（終了日が十分過去）の非出演イベントか"""
-    d = checked.get(url)
-    if not d:
-        return False
-    try:
-        end = date.fromisoformat(d)
-    except Exception:
-        return False
-    return end < datetime.now(JST).date() - timedelta(days=PAST_MARGIN_DAYS)
-
-
-def save_checked_urls(checked):
-    limit = datetime.now(JST).date() - timedelta(days=365)
-    pruned = {}
-    for url, d in checked.items():
-        try:
-            if date.fromisoformat(d) >= limit:  # 1年以上前の記録は捨てる
-                pruned[url] = d
-        except Exception:
-            pass
-    with open(CHECKED_FILE, "w", encoding="utf-8") as f:
-        json.dump(dict(sorted(pruned.items())), f, ensure_ascii=False, indent=0)
-    print(f"[DEBUG] 非出演イベントの記録を {len(pruned)} 件保存しました。")
-
-
-def _check_urls_worker(urls):
-    """1スレッド = 1ブラウザで、担当URLを順に検証する。戻り値: (出演イベント, 非出演と確定したURL)"""
-    events, excluded = [], []
-    if not urls:
-        return events, excluded
-
-    with sync_playwright() as p:
-        browser, context = _new_context(p)
-        page = context.new_page()
-
-        for url in urls:
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                try:
-                    page.wait_for_selector("h1", timeout=8000)
-                except Exception:
-                    pass
-
-                detail_html = page.content()
-                detail_soup = BeautifulSoup(detail_html, "html.parser")
-
-                if is_falench_performing(detail_soup):
-                    title_tag = detail_soup.find("h1") or detail_soup.find("title")
-                    raw_title = title_tag.get_text(strip=True) if title_tag else "SUPER JYAPON 出演ライブ"
-
-                    clean_title = raw_title.replace(" - LivePocket-Ticket-", "").replace("｜LivePocket", "")
-                    clean_title = re.sub(r'\s+', ' ', clean_title).strip()
-                    if len(clean_title) > 70:
-                        clean_title = clean_title[:70] + "..."
-
-                    event_date, sales_period = extract_event_details_from_page(page, url)
-
-                    print(f"[MATCH] ★SUPER JYAPONの出演を確認！: {clean_title} ({url})")
-                    print(f"       📅 日程: {event_date}")
-                    print(f"       🎟 販売期間: {sales_period}")
-
-                    events.append({
-                        "title": clean_title,
-                        "url": url,
-                        "date": event_date,
-                        "sales_period": sales_period,
-                    })
-                else:
-                    print(f"[EXCLUDE] SUPERJYAPON非出演のため除外: {url}")
-                    # 開催日を読み取れた場合のみ記録する（読めなければ毎回再検証＝取りこぼし防止）
-                    end_date = _event_end_date(_clean_lines(_soup_text(detail_html)))
-                    if detail_soup.find("h1") and end_date:
-                        excluded.append((url, end_date.isoformat()))
-
-            except Exception as e:
-                print(f"[WARN] 詳細検証失敗 ({url}): {e}")
-
-        browser.close()
-
-    return events, excluded
-
-
-def fetch_SUPERJYAPON_events(notified_urls):
-    t_start = time.time()
-    candidate_urls = set()
-    checked = load_checked_urls()
-    skipped_checked = 0
-
-    organizers = load_organizers()
-
-    search_urls = [
-        "https://livepocket.jp/event/search?word=SUPER+JYAPON&pref=&commit=%E6%A4%9C%E7%B4%A2%E3%81%99%E3%82%8B",
-    ] + [org["url"] for org in organizers if "url" in org]
-
-    # 1. 各ソースからイベント詳細URLを収集
-    with sync_playwright() as p:
-        browser, context = _new_context(p)
-        page = context.new_page()
-
-        for target_url in search_urls:
-            print(f"[DEBUG] ページをスキャン中: {target_url}")
-            try:
-                page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-                try:
-                    page.wait_for_selector('a[href*="/e/"], a[href*="/event/detail/"]', timeout=10000)
-                except Exception:
-                    pass
-
-                soup = BeautifulSoup(page.content(), "html.parser")
-
-                for a_tag in soup.find_all("a", href=True):
-                    href = a_tag["href"]
-                    if "/e/" not in href and "/event/detail/" not in href:
-                        continue
-
-                    full_url = href if href.startswith("http") else f"https://livepocket.jp{href}"
-                    clean_url = full_url.split("?")[0]
-
-                    if "/event/search" in clean_url:
-                        continue
-                    if clean_url in notified_urls:
-                        continue
-                    if is_past_event(clean_url, checked):
-                        skipped_checked += 1
-                        continue
-
-                    candidate_urls.add(clean_url)
-            except Exception as e:
-                print(f"[WARN] スキャン失敗 ({target_url}): {e}")
-
-        browser.close()
-
-    candidates = sorted(candidate_urls)
-    print(f"[DEBUG] 収集された検証対象のイベント総数: {len(candidates)}"
-          f"（開催済みで省略: {skipped_checked} 件）  [{time.time() - t_start:.1f}s]")
-
-    # 2. 詳細ページを並列に検証・情報抽出
-    new_events = []
-    excluded_all = []
-    if candidates:
-        n = max(1, min(MAX_WORKERS, len(candidates)))
-        chunks = [candidates[i::n] for i in range(n)]  # ラウンドロビンで均等に分ける
-        print(f"[DEBUG] {n} 並列で詳細ページを検証します。")
-        with ThreadPoolExecutor(max_workers=n) as ex:
-            for events, excluded in ex.map(_check_urls_worker, chunks):
-                new_events.extend(events)
-                excluded_all.extend(excluded)
-
-    # 非出演だったイベントの終了日を記録（開催済みになったものだけ次回以降スキップされる）
-    for u, end_iso in excluded_all:
-        checked[u] = end_iso
-    save_checked_urls(checked)
-
-    new_events.sort(key=lambda e: e["url"])
-    print(f"[DEBUG] 最終抽出された「SUPER JYAPON」出演ライブ数: {len(new_events)}"
-          f"  [合計 {time.time() - t_start:.1f}s]")
-    return new_events
-
-
-LINE_TEXT_LIMIT = 4500     # LINEのテキスト上限は5000文字。余裕を持たせる
-DISCORD_TEXT_LIMIT = 1900  # Discordのcontent上限は2000文字。余裕を持たせる
-
-
-def build_message_chunks(events, limit):
-    """イベント単位で区切りながら、文字数上限に収まるようメッセージを分割する"""
-    header = "🎉 【SUPER JYAPON】出演のチケット・ライブ情報が見つかりました！\n\n"
-    blocks = [
-        f"📌 {e['title']}\n"
-        f"📅 日程: {e['date']}\n"
-        f"🎟 販売期間: {e['sales_period']}\n"
-        f"🔗 {e['url']}"
-        for e in events
-    ]
-
-    chunks = []
-    current = header
-    for block in blocks:
-        candidate = current + block + "\n\n"
-        if len(candidate) > limit and current.strip() and current != header:
-            chunks.append(current.strip())
-            current = block + "\n\n"
-        else:
-            current = candidate
-    if current.strip():
-        chunks.append(current.strip())
-    return chunks
-
-
-def send_line_notification(events):
-    if not events:
-        print("[INFO] 送信する新着イベントがありません。")
-        return False
-
-    if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
-        print("[INFO] LINEの認証情報が未設定のため、LINE通知をスキップします。")
-        return False
-
-    endpoint = "https://api.line.me/v2/bot/message/push"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
-    }
-
-    all_ok = True
-    for chunk in build_message_chunks(events, LINE_TEXT_LIMIT):
-        payload = {
-            "to": LINE_USER_ID,
-            "messages": [{"type": "text", "text": chunk}]
-        }
-        res = requests.post(endpoint, json=payload, headers=headers, timeout=30)
-        print(f"[DEBUG] LINE APIレスポンスコード: {res.status_code}")
-        print(f"[DEBUG] LINE APIレスポンス詳細: {res.text}")
-        if res.status_code != 200:
-            print(f"[ERROR] LINE送信失敗: {res.status_code}")
-            all_ok = False
-
-    if all_ok:
-        print("[SUCCESS] LINEへの通知が成功しました！")
-    return all_ok
-
-
-def send_discord_notification(events):
-    if not events:
-        return False
-
-    if not DISCORD_WEBHOOK_URL:
-        print("[INFO] DISCORD_WEBHOOK_URL が未設定のため、Discord通知をスキップします。")
-        return False
-
-    all_ok = True
-    for chunk in build_message_chunks(events, DISCORD_TEXT_LIMIT):
-        payload = {
-            "content": chunk,
-            "allowed_mentions": {"parse": []},  # タイトル中の@everyone等でメンションが飛ばないようにする
-        }
-        res = None
-        for attempt in range(2):
-            res = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=30)
-            if res.status_code == 429 and attempt == 0:
-                try:
-                    wait = float(res.json().get("retry_after", 1))
-                except Exception:
-                    wait = 1.0
-                print(f"[WARN] Discordのレート制限。{wait}秒待って再送します。")
-                time.sleep(min(wait, 10))
-                continue
-            break
-
-        print(f"[DEBUG] Discord APIレスポンスコード: {res.status_code}")
-        if res.status_code not in (200, 204):
-            print(f"[ERROR] Discord送信失敗: {res.status_code} {res.text[:200]}")
-            all_ok = False
-
-    if all_ok:
-        print("[SUCCESS] Discordへの通知が成功しました！")
-    return all_ok
-
-
-if __name__ == "__main__":
-    notified_urls = load_notified_urls()
-    new_events = fetch_SUPERJYAPON_events(notified_urls)
-
-    if new_events:
-        results = {
-            "LINE": send_line_notification(new_events),
-            "Discord": send_discord_notification(new_events),
-        }
-        for name, ok in results.items():
-            print(f"[RESULT] {name}: {'成功' if ok else '失敗/スキップ'}")
-
-        # どちらか一方でも届いていれば既読扱いにして、届いた側への重複通知を防ぐ
-        if any(results.values()):
-            new_urls = {e["url"] for e in new_events}
-            save_notified_urls(new_urls, notified_urls)
-        else:
-            print("[ERROR] どの通知先にも送信できなかったため、キャッシュは更新しません。")
+        os.makedirs(DEBUG_DIR,
