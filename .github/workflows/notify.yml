@@ -40,3 +40,27 @@ jobs:
           path: ~/.cache/ms-playwright
 
       - name: Playwrightのインストール
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            playwright install chromium
+            playwright install-deps chromium
+          else
+            playwright install chromium --with-deps
+          fi
+
+      - name: 通知済み・開催済みキャッシュの復元
+        if: ${{ inputs.clear_cache != true }}
+        uses: actions/cache@v4
+        with:
+          key: notified-urls-cache-${{ github.run_id }}
+          restore-keys: notified-urls-cache-
+          path: |
+            notified_urls.txt
+            past_events.json
+
+      - name: スクリプトの実行
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python main.py
