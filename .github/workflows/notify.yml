@@ -1,14 +1,19 @@
-name: LivePocket Falench. Notifier
+name: LivePocket SUPERJYAPON Notifier
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '17 * * * *'  # 保険（0分は混むので避ける）。本命は cron-job.org からの起動
   workflow_dispatch:
     inputs:
       clear_cache:
         description: 'キャッシュをクリアして再取得しますか？'
         type: boolean
         default: false
+
+# 同時に動かさない（通知済みキャッシュを2つが同時に読んで二重通知になるのを防ぐ）
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   run-bot:
@@ -51,13 +56,3 @@ jobs:
           path: |
             notified_urls.txt
             past_events.json
-          key: notified-urls-cache-${{ github.run_id }}
-          restore-keys: |
-            notified-urls-cache-
-
-      - name: スクリプトの実行
-        env:
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: python main.py
